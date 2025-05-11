@@ -18,7 +18,6 @@ YELLOW = (255, 255, 153)
 FLASH_COLOR = (255, 200, 200)
 CYAN = (0, 255, 255)
 
-# Initialize Pygame
 pygame.init()
 WIN = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("AI-Enhanced Sudoku")
@@ -55,26 +54,42 @@ class RLAgent:
         self.actions = ['easy', 'medium', 'hard']
         self.last_state = None
         self.last_action = None
+        self.current_difficulty = 'medium' 
 
     def get_state(self, time_taken, mistakes):
-        speed = 'fast' if time_taken is not None and time_taken < 300 else 'slow'
-        accuracy = 'accurate' if mistakes < 5 else 'inaccurate'
+        if time_taken < 180: 
+            speed = 'fast'
+        elif time_taken < 360: 
+            speed = 'medium'
+        else:  
+            speed = 'slow'
+            
+        if mistakes < 3:  
+            accuracy = 'accurate'
+        elif mistakes < 6: 
+            accuracy = 'medium'
+        else:  
+            accuracy = 'inaccurate'
+            
         return (speed, accuracy)
 
     def choose_action(self, state):
         if state not in self.q_table:
-            self.q_table[state] = {}
-        for action in self.actions:
-            if action not in self.q_table[state]:
-                self.q_table[state][action] = 0
-        action = max(self.q_table[state], key=self.q_table[state].get)
-        self.last_state = state
-        self.last_action = action
-        return action
+            self.q_table[state] = {action: 0 for action in self.actions}
+            
+        max_q = max(self.q_table[state].values())
+        best_actions = [action for action, q in self.q_table[state].items() if q == max_q]
+        
+        if self.current_difficulty in best_actions:
+            return self.current_difficulty
+        return random.choice(best_actions)
 
-    def update(self, reward):
-        if self.last_state and self.last_action:
-            self.q_table[self.last_state][self.last_action] += reward
+    def update(self, state, action, reward):
+        if state not in self.q_table:
+            self.q_table[state] = {action: 0 for action in self.actions}
+            
+        self.q_table[state][action] += reward
+        self.current_difficulty = action  
 
 def fill_diagonal_boxes(board):
     for k in range(0, 9, 3):
@@ -89,8 +104,15 @@ def generate_puzzle(difficulty='medium'):
     fill_diagonal_boxes(board)
     solve(board)
     puzzle = deepcopy(board)
-    remove_count = 30 if difficulty == 'easy' else 40 if difficulty == 'medium' else 50
-    while remove_count:
+    
+    if difficulty == 'easy':
+        remove_count = random.randint(30, 35) 
+    elif difficulty == 'medium':
+        remove_count = random.randint(40, 45) 
+    else:  # hard
+        remove_count = random.randint(50, 55) 
+        
+    while remove_count > 0:
         r, c = random.randint(0, 8), random.randint(0, 8)
         if puzzle[r][c] != 0:
             puzzle[r][c] = 0
@@ -132,6 +154,7 @@ def draw_board(board, fixed, hint_limit, hints_used, selected, frozen, start_tim
     WIN.blit(SMALL_FONT.render("Guide", True, BLACK), (550, 250))
     WIN.blit(TINY_FONT.render("Hint: 'H'", True, BLACK), (550, 300))
     WIN.blit(TINY_FONT.render("Freeze: 'F'", True, BLACK), (550, 340))
+    WIN.blit(TINY_FONT.render(f"Difficulty: {agent.current_difficulty}", True, BLACK), (550, 380))
     WIN.blit(TINY_FONT.render(status_message, True, RED if "incorrect" in status_message.lower() or "hint" in status_message.lower() else GREEN), (550, HEIGHT - 50))
     pygame.display.update()
 
@@ -167,33 +190,32 @@ def shift_cells(board, fixed, frozen):
 def is_board_solved(board, solution, fixed):
     return all(board[r][c] == solution[r][c] for r in range(9) for c in range(9))
 
-def end_screen(score):
+def end_screen(score, difficulty):
     WIN.fill(WHITE)
-    msg = FONT.render(f"Your Score: {score}", True, GREEN)
-    WIN.blit(msg, (WIDTH//2 - msg.get_width()//2, HEIGHT//2 - 20))
+    msg1 = FONT.render(f"Your Score: {score}", True, GREEN)
+    msg2 = SMALL_FONT.render(f"Next game: {difficulty} difficulty", True, BLUE)
+    WIN.blit(msg1, (WIDTH//2 - msg1.get_width()//2, HEIGHT//2 - 50))
+    WIN.blit(msg2, (WIDTH//2 - msg2.get_width()//2, HEIGHT//2 + 20))
     pygame.display.update()
     pygame.time.delay(3000)
 
-def difficulty_menu():
-    return 'medium'  # Static for simplicity
-
 def main():
-    global status_message
+    global status_message, agent
     running_game = True
+    agent = RLAgent()
+    
     while running_game:
-        chosen_level = difficulty_menu()
         clock = pygame.time.Clock()
-        agent = RLAgent()
         start_time = time.time()
         mistake_count = 0
         hints_used = 0
 
-        puzzle, solution = generate_puzzle(chosen_level)
+        puzzle, solution = generate_puzzle(agent.current_difficulty)
         board = deepcopy(puzzle)
         fixed = [[puzzle[r][c] != 0 for c in range(9)] for r in range(9)]
         frozen = [[False for _ in range(9)] for _ in range(9)]
         selected = None
-        hint_limit = 100
+        hint_limit =  100
         correct_moves = 0
         freeze_cooldown = 10
         last_freeze_time = -freeze_cooldown
@@ -254,11 +276,28 @@ def main():
 
             if is_board_solved(board, solution, fixed):
                 time_taken = time.time() - start_time
-                state = agent.get_state(time_taken, mistake_count + hints_used)
+                total_penalties = mistake_count + hints_used
+                
+                if agent.current_difficulty == 'easy':
+                    expected_time = 300  
+                    expected_mistakes = 5
+                elif agent.current_difficulty == 'medium':
+                    expected_time = 480  
+                    expected_mistakes = 8
+                else:  
+                    expected_time = 600  
+                    expected_mistakes = 12
+                
+                time_score = max(0, expected_time - time_taken) / 10
+                mistake_score = max(0, expected_mistakes - total_penalties) * 2
+                reward = time_score + mistake_score
+                
+                state = agent.get_state(time_taken, total_penalties)
                 new_difficulty = agent.choose_action(state)
-                agent.update(10 - mistake_count - hints_used)
-                score = int(1000 - time_taken - 10 * (mistake_count + hints_used))
-                end_screen(score)
+                agent.update(state, new_difficulty, reward)
+                
+                score = int(1000 - time_taken - 10 * total_penalties)
+                end_screen(score, new_difficulty)
                 running = False
 
 if __name__ == "__main__":
