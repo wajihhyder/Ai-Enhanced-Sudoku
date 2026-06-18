@@ -72,8 +72,6 @@ Requires Python 3.9+ and a desktop environment (Pygame opens a window).
 
 ```
 Ai_Project.py                       game loop, solver/generator, RLAgent, rendering
-21i-2957_21k-3379_Report.pdf        project report
-21i-2957_21k-3379_AI_LAB_Proposal.pdf  proposal
 ```
 
 ---
